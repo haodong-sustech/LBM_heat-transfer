@@ -1,0 +1,280 @@
+clear
+global NY NX NUM NPOP f f2 rho ux uy weights cx cy omega u0 conc_inlet conc_wall N NOUTPUT
+
+% Initialize constants
+NPOP = 9;
+u0 = 0.05;
+conc_inlet = 0.0;
+conc_wall = 1.0;
+omega = 1.4;
+weights = [4.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0];
+cx = [0, 1, 0, -1, 0, 1, -1, -1, 1];
+cy = [0, 0, 1, 0, -1, 1, 1, -1, -1];
+
+N = 50000;
+NOUTPUT = 100;
+
+% Initialize geometry and fields
+initialize_geometry();
+
+% Initialize populations
+init();
+
+% Main loop
+for counter = 0:N
+    collide();
+    update_bounce_back();
+    stream();
+    
+    % Writing files
+    if mod(counter, NOUTPUT) == 0
+        disp(['Counter=' num2str(counter)]);
+        filewritedensity = ['film' num2str(counter, '%07d')];
+        writedensity(filewritedensity, NX, NY, rho);
+    end
+end
+
+
+
+% nstep = 20;
+% i = 0;
+% for k1 = 1:nstep
+%     i = i + 1;
+%     % Display the final value of i
+%     disp(['Final value of i: ', num2str(i)]);
+%     initialize_geometry();
+%     init();
+%     collide();
+%     stream();
+% end
+
+function writedensity(fname, NX, NY, rho)
+    % 定义文件名
+    filename = ['film_antibb/' fname '.dat'];
+    
+    % 打开文件进行写操作
+    fid = fopen(filename, 'w');
+    
+    % 设置输出精度
+    precision = '%.10f';
+    
+    % 遍历每个网格点并写入密度值
+    for iX = 1:NX
+        for iY = 1:NY
+            counter = (iY - 1) * NX + iX;
+            fprintf(fid, [precision ' '], rho(counter));
+        end
+        fprintf(fid, '\n');
+    end
+    
+    % 关闭文件
+    fclose(fid);
+end
+
+function writevelocityx(fname, NX, NY, ux)
+    % 定义文件名
+    filename = ['film_antibb/' fname '.dat'];
+    
+    % 打开文件进行写操作
+    fid = fopen(filename, 'w');
+    
+    % 设置输出精度
+    precision = '%.10f';
+    
+    % 遍历每个网格点并写入x方向速度值
+    for iX = 1:NX
+        for iY = 1:NY
+            counter = (iY - 1) * NX + iX;
+            fprintf(fid, [precision ' '], ux(counter));
+        end
+        fprintf(fid, '\n');
+    end
+    
+    % 关闭文件
+    fclose(fid);
+end
+
+function writevelocityy(fname, NX, NY, uy)
+    % 定义文件名
+    filename = ['film_antibb/' fname '.dat'];
+    
+    % 打开文件进行写操作
+    fid = fopen(filename, 'w');
+    
+    % 设置输出精度
+    precision = '%.10f';
+    
+    % 遍历每个网格点并写入y方向速度值
+    for iX = 1:NX
+        for iY = 1:NY
+            counter = (iY - 1) * NX + iX;
+            fprintf(fid, [precision ' '], uy(counter));
+        end
+        fprintf(fid, '\n');
+    end
+    
+    % 关闭文件
+    fclose(fid);
+end
+
+
+function initialize_geometry()
+    global NY NX NUM rho ux uy u0 conc_inlet conc_wall
+
+    NY = 10 * 40;
+    NX = 40;
+    NUM = NX * NY;
+    
+    % 初始化数组
+    rho = zeros(NUM, 1);
+    ux = zeros(NUM, 1);
+    uy = zeros(NUM, 1);
+    
+    % Initialization
+    for iY = 1:NY
+        for iX = 1:NX
+            counter = (iY - 1) * NX + iX;
+            rho(counter) = 0.0;
+            uy(counter) = u0 * (1.0 - ((iX - 0.5)^2 / ((NX - 2)^2)));
+            ux(counter) = 0.0;
+        end
+    end
+ 
+    for iX = 2:NX-1
+        rho(iX) = conc_inlet;
+    end
+    
+    for iY = 1:NY
+        rho((iY - 1) * NX + NX) = conc_wall;
+    end
+
+    writedensity('conc_initial', NX, NY, rho);
+    writevelocityx('ux_initial', NX, NY, ux);
+    writevelocityy('uy_initial', NX, NY, uy);
+end
+
+function init()
+    global NUM NPOP f f2 rho ux uy weights cx cy
+    NY = 10 * 40;
+    NX = 40;
+    NUM = NX * NY;
+    % Creating arrays
+    f = zeros(NUM * NPOP, 1);
+    f2 = zeros(NUM * NPOP, 1);
+    
+    % Bulk nodes initialization
+    for iY = 1:NY
+        for iX = 1:NX
+            counter = (iY - 1) * NX + iX;
+            dense_temp = rho(counter);
+            ux_temp = ux(counter);
+            uy_temp = uy(counter);
+            
+            for k = 1:NPOP
+                feq = weights(k) * (dense_temp + 3.0 * dense_temp * (cx(k) * ux_temp + cy(k) * uy_temp) ...
+                                    + 4.5 * dense_temp * ((cx(k)^2 - 1.0/3.0) * ux_temp^2 ...
+                                                         + (cy(k)^2 - 1.0/3.0) * uy_temp^2 ...
+                                                         + 2.0 * ux_temp * uy_temp * cx(k) * cy(k)));
+                f((counter - 1) * NPOP + k) = feq;
+            end
+        end
+    end
+end
+
+function collide()
+    global NY NX NPOP f f2 rho ux uy weights cx cy omega
+
+    for iY = 1:NY
+        for iX = 1:NX
+            counter = (iY - 1) * NX + iX;
+            rho(counter) = 0.0;
+            
+            offset = (counter - 1) * NPOP;
+     
+            sum = 0;
+            for k = 1:NPOP
+                sum = sum + f(offset + k);
+            end
+    
+            rho(counter) = sum;
+
+            dense_temp = rho(counter);
+            ux_temp = ux(counter);
+            uy_temp = uy(counter);
+            
+            feq = zeros(NPOP, 1);
+     
+            % Collision operator
+            for k = 1:NPOP
+                feq(k) = weights(k) * dense_temp * (1.0 + 3.0 * (cx(k) * ux_temp + cy(k) * uy_temp) ...
+                           + 4.5 * ((cx(k)^2 - 1.0/3.0) * ux_temp^2 + 2.0 * cx(k) * cy(k) * ux_temp * uy_temp + (cy(k)^2 - 1.0/3.0) * uy_temp^2));
+                f2(offset + k) = f(offset + k) - omega * (f(offset + k) - feq(k));
+            end
+        end
+    end
+end
+
+function update_bounce_back()
+    global NX NY NPOP f2 rho weights conc_inlet conc_wall
+
+    % Updating inlet populations
+    for iX = 2:NX-1
+        offset = (iX - 1) * NPOP;
+
+        f2(offset + 3) = - f2((NX + iX - 1) * NPOP + 5) + 2 * weights(3) * conc_inlet;
+        f2(offset + 6) = - f2((NX + iX) * NPOP + 8) + 2 * weights(6) * conc_inlet;
+        f2(offset + 7) = - f2((NX + iX - 2) * NPOP + 9) + 2 * weights(7) * conc_inlet;
+    end
+
+    % Updating wall populations
+    for iY = 1:NY
+        ytop = mod(iY, NY) + 1;
+        ybottom = mod(iY - 2, NY) + 1;
+        offset = ((iY - 1) * NX + NX) * NPOP;
+
+        f2(offset + 4) = - f2(((iY - 1) * NX + NX - 1) * NPOP + 2) + 2 * weights(4) * conc_wall;
+        f2(offset + 7) = - f2(((ytop - 1) * NX + NX - 1) * NPOP + 9) + 2 * weights(7) * conc_wall;
+        f2(offset + 8) = - f2(((ybottom - 1) * NX + NX - 1) * NPOP + 6) + 2 * weights(8) * conc_wall;
+
+        rho((iY - 1) * NX + NX) = conc_wall;
+    end
+
+    % Updating outlet populations
+    for iX = 2:NX-1
+        offset = ((NY-1) * NX + (iX - 1)) * NPOP;
+        offset2 = ((NY-2) * NX + (iX - 1)) * NPOP;
+
+        for k = 1:NPOP
+            f2(offset + k) = f2(offset2 + k);
+        end
+    end
+
+    % Updating the free wall
+    for iY = 1:NY
+        offset = (iY - 1) * NX * NPOP;
+        ytop = mod(iY, NY) + 1;
+        ybottom = mod(iY - 2, NY) + 1;
+
+        f2(offset + 2) = f2(((iY - 1) * NX + 1) * NPOP + 4);
+        f2(offset + 6) = f2(((ytop - 1) * NX + 1) * NPOP + 8);
+        f2(offset + 9) = f2(((ybottom - 1) * NX + 1) * NPOP + 7);
+
+        rho((iY - 1) * NX + 1) = rho((iY - 1) * NX + 2);
+    end
+end
+
+function stream()
+    global NY NX NPOP f f2 cx cy
+
+    for iY = 1:NY
+        for iX = 1:NX
+            counter = (iY - 1) * NX + iX;
+            for iPop = 1:NPOP
+                iX2 = mod(iX - 1 + cx(iPop), NX) + 1;
+                iY2 = mod(iY - 1 + cy(iPop), NY) + 1;
+                counter2 = (iY2 - 1) * NX + iX2;
+                f((counter2 - 1) * NPOP + iPop) = f2((counter - 1) * NPOP + iPop);
+            end
+        end
+    end
+end
